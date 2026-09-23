@@ -2,353 +2,244 @@
 
 <html lang="pt-BR">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Emulador</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Emulador</title>
 
-    <style>
-        html,
-        body {
-            width: 100%;
-            height: 100%;
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-            background: #000;
-            color: #fff;
-            font-family: Arial, sans-serif;
-        }
+<style>
+html,
+body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: #000;
+    color: #fff;
+    font-family: Arial, sans-serif;
+    overflow: hidden;
+}
 
-        #loading {
-            position: fixed;
-            inset: 0;
-            z-index: 10;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            background: #000;
-            text-align: center;
-        }
+#loading {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: #000;
+    text-align: center;
+}
 
-        #loading h1 {
-            margin: 0 0 12px;
-        }
+#loading h1 {
+    margin: 0 0 12px;
+}
 
-        #progresso {
-            max-width: 90%;
-            color: #aaa;
-            line-height: 1.5;
-        }
+#progresso {
+    color: #aaa;
+}
 
-        #barra {
-            width: min(500px, 80%);
-            height: 8px;
-            margin-top: 20px;
-            overflow: hidden;
-            background: #222;
-            border-radius: 10px;
-        }
+#erro {
+    display: none;
+    max-width: 700px;
+    padding: 20px;
+    color: #ff5555;
+    text-align: center;
+}
 
-        #barraProgresso {
-            width: 0%;
-            height: 100%;
-            background: #1976d2;
-            transition: width 0.15s ease;
-        }
-
-        #erro {
-            display: none;
-            max-width: 700px;
-            padding: 20px;
-            color: #ff5555;
-            line-height: 1.5;
-        }
-
-        #game {
-            width: 100%;
-            height: 100%;
-        }
-    </style>
+#game {
+    width: 100%;
+    height: 100%;
+}
+</style>
 
 </head>
 
 <body>
-    <div id="loading">
-        <h1>Carregando jogo...</h1>
-        <div id="progresso">Preparando...</div>
 
-        <div id="barra">
-            <div id="barraProgresso"></div>
-        </div>
+<div id="loading">
+    <h1>Carregando jogo...</h1>
+    <div id="progresso">Preparando...</div>
+    <div id="erro"></div>
+</div>
 
-        <div id="erro"></div>
-    </div>
+<div id="game"></div>
 
-    <div id="game"></div>
+<script src="jogo.js"></script>
 
-    <script src="jogo.js"></script>
+<script>
+const parametros = new URLSearchParams(window.location.search);
+const id = parametros.get("jogo");
 
-    <script>
-        const EJS_DATA = "https://cdn.emulatorjs.org/stable/data/";
-        const DOWNLOADS_SIMULTANEOS = 8;
+const progresso = document.getElementById("progresso");
+const erro = document.getElementById("erro");
+const loading = document.getElementById("loading");
 
-        const parametros = new URLSearchParams(window.location.search);
-        const id = parametros.get("jogo");
+const MAX_CONEXOES = 4;
 
-        const progresso = document.getElementById("progresso");
-        const erro = document.getElementById("erro");
-        const loading = document.getElementById("loading");
-        const barra = document.getElementById("barraProgresso");
+function atualizarProgresso(texto) {
+    progresso.textContent = texto;
+}
 
-        const BASE_URL = new URL("./", window.location.href);
+async function baixarParte(url, numero, total) {
+    const resposta = await fetch(url, {
+        cache: "force-cache"
+    });
 
-        function atualizarProgresso(texto, porcentagem = null) {
-            progresso.textContent = texto;
+    if (!resposta.ok) {
+        throw new Error(
+            "Não foi possível carregar a parte " + numero + " de " + total
+        );
+    }
 
-            if (porcentagem !== null) {
-                const valor = Math.max(0, Math.min(100, porcentagem));
-                barra.style.width = valor + "%";
-            }
-        }
+    return resposta.arrayBuffer();
+}
 
-        function mostrarErro(mensagem) {
-            loading.style.display = "flex";
-            progresso.style.display = "none";
-            document.getElementById("barra").style.display = "none";
-            erro.style.display = "block";
-            erro.textContent = "Erro: " + mensagem;
-            console.error(mensagem);
-        }
+async function baixarPartes(jogo) {
+    const urls = [];
 
-        function obterExtensao(url) {
-            const nome = url
-                .split("?")[0]
-                .split("#")[0]
-                .split("/")
-                .pop()
-                .toLowerCase();
+    for (let i = 1; i <= jogo.partes; i++) {
+        urls.push(jogo.url + ".part" + i);
+    }
 
-            const posicao = nome.lastIndexOf(".");
+    const partes = new Array(jogo.partes);
+    let proximaParte = 0;
+    let concluidas = 0;
 
-            if (posicao === -1) {
-                return "";
+    async function trabalhador() {
+        while (true) {
+            const indice = proximaParte++;
+
+            if (indice >= urls.length) {
+                return;
             }
 
-            return nome.substring(posicao);
-        }
-
-        function validarJogo(jogo) {
-            if (!jogo) {
-                throw new Error("Jogo não encontrado.");
-            }
-
-            if (!jogo.sistema) {
-                throw new Error("O jogo não possui um sistema definido.");
-            }
-
-            const sistema = SISTEMAS[jogo.sistema];
-
-            if (!sistema) {
-                throw new Error("Sistema não encontrado: " + jogo.sistema);
-            }
-
-            return sistema;
-        }
-
-        async function baixarParte(url) {
-            const resposta = await fetch(url, {
-                cache: "force-cache"
-            });
-
-            if (!resposta.ok) {
-                throw new Error("HTTP " + resposta.status);
-            }
-
-            return await resposta.arrayBuffer();
-        }
-
-        async function baixarPartesParalelo(jogo) {
-            const total = Number(jogo.partes);
-
-            if (!Number.isInteger(total) || total <= 0) {
-                throw new Error("Número de partes inválido.");
-            }
-
-            const partes = new Array(total);
-            let proximaParte = 0;
-            let concluidas = 0;
-
-            async function trabalhador() {
-                while (true) {
-                    const indice = proximaParte++;
-
-                    if (indice >= total) {
-                        return;
-                    }
-
-                    const numero = indice + 1;
-
-                    const url = new URL(
-                        jogo.url + ".part" + numero,
-                        BASE_URL
-                    ).href;
-
-                    atualizarProgresso(
-                        "Baixando partes... " +
-                        concluidas +
-                        "/" +
-                        total +
-                        " — parte " +
-                        numero
-                    );
-
-                    try {
-                        const dados = await baixarParte(url);
-
-                        partes[indice] = dados;
-                        concluidas++;
-
-                        atualizarProgresso(
-                            "Baixando partes... " +
-                            concluidas +
-                            "/" +
-                            total,
-                            (concluidas / total) * 100
-                        );
-                    } catch (e) {
-                        throw new Error(
-                            "Falha ao baixar a parte " +
-                            numero +
-                            ": " +
-                            e.message
-                        );
-                    }
-                }
-            }
-
-            const quantidade = Math.min(
-                DOWNLOADS_SIMULTANEOS,
-                total
-            );
-
-            const trabalhadores = [];
-
-            for (let i = 0; i < quantidade; i++) {
-                trabalhadores.push(trabalhador());
-            }
-
-            await Promise.all(trabalhadores);
+            const numero = indice + 1;
 
             atualizarProgresso(
-                "Juntando arquivos...",
-                100
+                "Baixando partes... " +
+                concluidas +
+                " de " +
+                jogo.partes
             );
 
-            const blob = new Blob(partes, {
-                type: "application/octet-stream"
-            });
+            partes[indice] = await baixarParte(
+                urls[indice],
+                numero,
+                jogo.partes
+            );
 
-            partes.fill(null);
+            concluidas++;
 
-            return URL.createObjectURL(blob);
+            atualizarProgresso(
+                "Baixando partes... " +
+                concluidas +
+                " de " +
+                jogo.partes
+            );
+        }
+    }
+
+    const quantidadeTrabalhadores = Math.min(
+        MAX_CONEXOES,
+        jogo.partes
+    );
+
+    await Promise.all(
+        Array.from(
+            { length: quantidadeTrabalhadores },
+            () => trabalhador()
+        )
+    );
+
+    atualizarProgresso("Juntando arquivos...");
+
+    const blob = new Blob(partes, {
+        type: "application/octet-stream"
+    });
+
+    partes.length = 0;
+
+    return URL.createObjectURL(blob);
+}
+
+async function prepararJogo(jogo) {
+    if (!jogo.partes || jogo.partes <= 0) {
+        atualizarProgresso("Carregando jogo...");
+        return jogo.url;
+    }
+
+    return baixarPartes(jogo);
+}
+
+function carregarEmulatorJS(jogo, url) {
+    window.EJS_player = "#game";
+    window.EJS_core = SISTEMAS[jogo.sistema].core;
+    window.EJS_gameName = jogo.nome;
+    window.EJS_gameUrl = url;
+    window.EJS_pathtodata = "EmulatorJS-main/data/";
+
+    const script = document.createElement("script");
+
+    script.src = "EmulatorJS-main/data/loader.js";
+
+    script.onload = function() {
+        atualizarProgresso("EmulatorJS carregado.");
+    };
+
+    script.onerror = function() {
+        throw new Error(
+            "Não foi possível carregar EmulatorJS-main/data/loader.js"
+        );
+    };
+
+    document.body.appendChild(script);
+}
+
+async function iniciar() {
+    try {
+        if (!id) {
+            throw new Error("Nenhum jogo foi selecionado.");
         }
 
-        function obterArquivoDireto(jogo) {
-            return new URL(
-                jogo.url,
-                BASE_URL
-            ).href;
+        const jogo = JOGOS[id];
+
+        if (!jogo) {
+            throw new Error("Jogo não encontrado: " + id);
         }
 
-        function iniciarEmulatorJS(jogo, sistema, urlFinal) {
-            window.EJS_player = "#game";
-            window.EJS_core = sistema.core;
-            window.EJS_gameName = jogo.nome;
-            window.EJS_gameUrl = urlFinal;
-            window.EJS_pathtodata = EJS_DATA;
-            window.EJS_startOnLoaded = true;
+        const sistema = SISTEMAS[jogo.sistema];
 
-            if (jogo.bios) {
-                window.EJS_biosUrl = new URL(
-                    jogo.bios,
-                    BASE_URL
-                ).href;
-            }
-
-            const script = document.createElement("script");
-
-            script.src = EJS_DATA + "loader.js";
-
-            script.onload = function() {
-                console.log("EmulatorJS carregado.");
-            };
-
-            script.onerror = function() {
-                mostrarErro(
-                    "Não foi possível carregar o EmulatorJS."
-                );
-            };
-
-            document.body.appendChild(script);
+        if (!sistema) {
+            throw new Error(
+                "Sistema não configurado: " + jogo.sistema
+            );
         }
 
-        async function iniciar() {
-            try {
-                if (!id) {
-                    throw new Error(
-                        "Nenhum jogo foi selecionado."
-                    );
-                }
+        document.title = jogo.nome;
 
-                const jogo = JOGOS[id];
+        const urlFinal = await prepararJogo(jogo);
 
-                if (!jogo) {
-                    throw new Error(
-                        "Jogo não encontrado: " + id
-                    );
-                }
+        atualizarProgresso("Iniciando EmulatorJS...");
 
-                const sistema = validarJogo(jogo);
+        carregarEmulatorJS(jogo, urlFinal);
 
-                document.title = jogo.nome;
+        setTimeout(function() {
+            loading.style.display = "none";
+        }, 1000);
 
-                atualizarProgresso(
-                    "Sistema: " +
-                    jogo.sistema +
-                    " — Core: " +
-                    sistema.core
-                );
+    } catch (e) {
+        console.error(e);
 
-                let urlFinal;
+        loading.style.display = "flex";
+        progresso.style.display = "none";
+        erro.style.display = "block";
+        erro.textContent = "Erro: " + e.message;
+    }
+}
 
-                if (jogo.partes > 0) {
-                    urlFinal = await baixarPartesParalelo(jogo);
-                } else {
-                    atualizarProgresso(
-                        "Carregando jogo...",
-                        100
-                    );
+iniciar();
+</script>
 
-                    urlFinal = obterArquivoDireto(jogo);
-                }
-
-                atualizarProgresso(
-                    "Iniciando EmulatorJS...",
-                    100
-                );
-
-                iniciarEmulatorJS(
-                    jogo,
-                    sistema,
-                    urlFinal
-                );
-            } catch (e) {
-                mostrarErro(e.message);
-            }
-        }
-
-        iniciar();
-    </script>
 </body>
 </html>

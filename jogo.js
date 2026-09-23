@@ -220,7 +220,7 @@ partes: 2
 "nfsunderground2": {
     nome: "Need for Speed: Underground 2",
     sistema: "gba",
-    url: "Jogos/need-for-speed/nfsnderground2/nfsnderground2.zip",
+    url: "Jogos/need-for-speed/nfsnderground2/nfsunderground2.zip",
     partes: 1
 },
 
